@@ -1,0 +1,39 @@
+name: CI (Type Check & Unit Tests)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. コードのチェックアウト
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Node.js のセットアップ
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      # 3. 依存関係のインストール (--legacy-peer-deps 指定)
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      # 4. Prisma Client の型生成
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      # 5. TypeScript 型チェック
+      - name: Run TypeScript type check
+        run: npx tsc --noEmit
+
+      # 6. Vitest 単体テストの実行（1回切りで終了する run モード）
+      - name: Run Vitest unit tests
+        run: npx vitest run

@@ -1,0 +1,245 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String    @id @default(uuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  role          Role      @default(MEMBER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Auth.js リレーション
+  accounts      Account[]
+  sessions      Session[]
+  approvalSteps ApprovalStep[]
+
+  // アプリ固有のリレーション
+  memberships      GroupMember[] 
+  drafts           Proposal[]    @relation("DraftedProposals")
+  receivedReceipts Receipt[]
+  events           Event[]
+
+  // 💡 追加: 予約のリレーション
+  reservations     Reservation[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ==========================================
+// アプリ機能モデル (グループ・起案・収受・予約)
+// ==========================================
+
+// グループ（部署・課など）
+model Group {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // リレーション
+  members   GroupMember[] 
+  proposals Proposal[]
+
+  @@map("groups")
+}
+
+// ユーザーとグループの中間テーブル（多対多の紐付け）
+model GroupMember {
+  id        String   @id @default(uuid())
+  userId    String
+  groupId   String
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, groupId])
+  @@map("group_members")
+}
+
+model Proposal {
+  id        String    @id @default(uuid())
+  title     String
+  content   String
+  status    String    @default("SUBMITTED")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  dueDate   DateTime? // 追加：起案の期限日など
+  fileUrl   String?
+
+  authorId  String
+  author    User      @relation("DraftedProposals", fields: [authorId], references: [id], onDelete: Cascade)
+
+  groupId   String?
+  group     Group?    @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  receipts      Receipt[]
+  approvalSteps ApprovalStep[] 
+
+  @@map("proposals")
+}
+
+model Event {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  startDate   DateTime
+  endDate     DateTime
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("events")
+}
+
+// 収受・閲覧権限テーブル
+model Receipt {
+  id         String    @id @default(uuid())
+  proposalId String
+  userId     String
+  readAt     DateTime? 
+  createdAt  DateTime  @default(now())
+
+  proposal Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([proposalId, userId])
+  @@map("receipts")
+}
+
+// 決裁・承認ステップを管理するテーブル
+model ApprovalStep {
+  id         String   @id @default(uuid())
+  proposalId String
+  userId     String   
+  role       String   
+  status     String   @default("PENDING") 
+  comment    String?  
+  order      Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  proposal Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("approval_steps")
+}
+
+// ==========================================
+// 💡 追加: 予約システム用モデル
+// ==========================================
+
+// 予約対象（会議室・公用車・プロジェクターなど）
+model Resource {
+  id          String           @id @default(uuid())
+  name        String           // 例: "第1会議室", "公用車A(プリウス)", "モバイルプロジェクター"
+  category    ResourceCategory // ROOM, CAR, EQUIPMENT
+  description String?          // 定員やナンバーなどの補助情報
+  capacity    Int?             // 定員（人）または個数
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  reservations Reservation[]
+
+  @@map("resources")
+}
+
+// 予約データ
+model Reservation {
+  id         String            @id @default(uuid())
+  title      String            // 利用目的（例: 「○○課打ち合わせ」「本庁巡回」など）
+  startTime  DateTime          // 利用開始日時
+  endTime    DateTime          // 利用終了日時
+  status     ReservationStatus @default(CONFIRMED)
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  resourceId String
+  resource   Resource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  // 予約重複チェックを高速化するためのインデックス
+  @@index([resourceId, startTime, endTime])
+  @@map("reservations")
+}
+
+// --- 列挙型（Enum） ---
+enum ProposalStatus {
+  DRAFT       
+  SUBMITTED   
+  APPROVED    
+  REJECTED    
+}
+
+enum Role {
+  ADMIN
+  MEMBER
+}
+
+// 💡 追加: 予約対象のカテゴリ区分
+enum ResourceCategory {
+  ROOM      // 会議室
+  CAR       // 公用車
+  EQUIPMENT // 備品
+}
+
+// 💡 追加: 予約ステータス
+enum ReservationStatus {
+  CONFIRMED // 確定
+  CANCELLED // キャンセル
+}
